@@ -1,0 +1,14 @@
+database_url: "root:381412@tcp(localhost:3306)/tradingbot"
+exchange:
+  name: "KIS"
+  api_key: "PS58tptuVOJBjgDeXuY5Plw7XIsYaapuyBRZ"
+  api_secret: "P/tkFImbdHvNDfxRdL3kcnCB6LOKQWDAq8wnVi109zLcXQ/ZHXpThs4wi6SaF54YH+XFh4yFzIegV6D8wcE3w5eEJ9xk+/EgoeGuF/lo+4iSFGlUqMDanQwy+bCDDbZdNpp/j2lptWyDWtEecYJxe5cU9k+S0qbd4mg9fxuSuzuw8BebLgs="
+  account_no: "64176956"  # 계좌 번호 추가
+
+strategy:
+  name: "moving_average"
+  short_period: 10
+  long_period: 30
+  threshold: 0.01
+trading_pair: "005930"  # 삼성전자 종목 코드
+polling_interval: "1m"
