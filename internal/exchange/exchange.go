@@ -7,8 +7,19 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"time"
 	"tradingbot/internal/config"
 	"tradingbot/internal/models"
+
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+)
+
+var log = logrus.New()
+
+const (
+	maxRetries = 3
+	retryDelay = 5 * time.Second
 )
 
 type KISExchange struct {
@@ -23,17 +34,13 @@ func New(cfg config.ExchangeConfig) (*KISExchange, error) {
 	ex := &KISExchange{
 		APIKey:    cfg.APIKey,
 		APISecret: cfg.APISecret,
-		BaseURL:   "https://openapi.koreainvestment.com:9443", // 실전 투자용 엔드포인트
+		BaseURL:   "https://openapivts.koreainvestment.com:29443",
 		AccountNo: cfg.AccountNo,
 	}
 
-	fmt.Printf("API Key: %s\n", ex.APIKey)
-	fmt.Printf("API Secret: %s\n", ex.APISecret)
-	fmt.Printf("Account No: %s\n", ex.AccountNo)
-
 	token, err := ex.getAuthToken()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get auth token: %v", err)
 	}
 	ex.AuthToken = token
 
@@ -129,7 +136,25 @@ func (e *KISExchange) PlaceOrder(signal *models.Signal) (*models.Order, error) {
 		return nil, err
 	}
 
-	return &order, nil
+	return &models.Order{
+		Pair:   signal.Pair,
+		Type:   signal.Type,
+		Amount: signal.Amount,
+		Status: "placed",
+	}, nil
+}
+
+func (e *KISExchange) GetMarketDataWithRetry(pair string) (*models.MarketData, error) {
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		marketData, err := e.GetMarketData(pair)
+		if err == nil {
+			return marketData, nil
+		}
+		log.WithError(err).Warnf("Failed to get market data, retrying in %v...", retryDelay)
+		time.Sleep(retryDelay)
+	}
+	return nil, errors.Wrap(err, "failed to get market data after multiple retries")
 }
 
 func (e *KISExchange) GetMarketData(pair string) (*models.MarketData, error) {
@@ -164,8 +189,6 @@ func (e *KISExchange) GetMarketData(pair string) (*models.MarketData, error) {
 		return nil, err
 	}
 
-	fmt.Println("Market Data Response Body:", string(respBody))
-
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, err
@@ -185,11 +208,11 @@ func (e *KISExchange) GetSamsungPrice() (*models.MarketData, error) {
 	return e.GetMarketData("005930")
 }
 
-func (e *KISExchange) GetBalance() (interface{}, error) {
+func (e *KISExchange) GetBalance() (string, error) {
 	url := fmt.Sprintf("%s/uapi/domestic-stock/v1/trading/inquire-account-balance", e.BaseURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.AuthToken))
@@ -208,37 +231,30 @@ func (e *KISExchange) GetBalance() (interface{}, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get balance, status code: %d", resp.StatusCode)
+		return "", fmt.Errorf("failed to get balance, status code: %d", resp.StatusCode)
 	}
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-
-	fmt.Println("Balance Response Body:", string(respBody))
 
 	var balanceData map[string]interface{}
 	if err := json.Unmarshal(respBody, &balanceData); err != nil {
-		return nil, err
+		return "", err
 	}
 
-	// Log detailed balance information
-	output1, ok := balanceData["output1"].([]interface{})
-	if ok {
-		for i, item := range output1 {
-			fmt.Printf("Output1 Item %d: %+v\n", i, item)
+	// Extract the relevant balance information
+	if output2, ok := balanceData["output2"].(map[string]interface{}); ok {
+		if dnclAmt, ok := output2["dncl_amt"].(string); ok {
+			return dnclAmt, nil
 		}
 	}
-	output2, ok := balanceData["output2"].(map[string]interface{})
-	if ok {
-		fmt.Printf("Output2: %+v\n", output2)
-	}
 
-	return balanceData, nil
+	return "", fmt.Errorf("balance information not found in response")
 }
