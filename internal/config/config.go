@@ -4,6 +4,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v2"
 )
 
@@ -17,9 +18,9 @@ type Config struct {
 
 type ExchangeConfig struct {
 	Name      string `yaml:"name"`
-	APIKey    string `yaml:"api_key"`
-	APISecret string `yaml:"api_secret"`
-	AccountNo string `yaml:"account_no"` // 계좌 번호 필드 추가
+	APIKey    string `yaml:"-"` // YAML에서 제외
+	APISecret string `yaml:"-"` // YAML에서 제외
+	AccountNo string `yaml:"account_no"`
 }
 
 type StrategyConfig struct {
@@ -30,6 +31,12 @@ type StrategyConfig struct {
 }
 
 func Load(filename string) (*Config, error) {
+	// .env 파일 로드
+	err := godotenv.Load()
+	if err != nil {
+		return nil, err
+	}
+
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -43,7 +50,11 @@ func Load(filename string) (*Config, error) {
 		return nil, err
 	}
 
-	config.PollingInterval *= time.Minute // polling_interval을 분 단위로 변환
+	// .env 파일에서 로드된 환경 변수에서 API 키와 비밀키 읽기
+	config.Exchange.APIKey = os.Getenv("EXCHANGE_API_KEY")
+	config.Exchange.APISecret = os.Getenv("EXCHANGE_API_SECRET")
+
+	config.PollingInterval *= time.Minute
 
 	return &config, nil
 }
