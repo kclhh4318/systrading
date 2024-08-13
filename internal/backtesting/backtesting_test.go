@@ -10,13 +10,25 @@ import (
 	"tradingbot/internal/strategy"
 )
 
+const (
+	stockCode    = "041510"
+	minutePoints = 420
+)
+
+var projectRoot string
+
 func findProjectRoot() (string, error) {
+	if projectRoot != "" {
+		return projectRoot, nil
+	}
+
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			projectRoot = dir
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)
@@ -49,7 +61,7 @@ func TestBacktestingWithMinuteData(t *testing.T) {
 	}
 
 	// 당일의 1분봉 데이터 가져오기
-	historicalData, err := exch.GetMinuteData("041510", 420) // 041510: HD현대중공업, 하루치 1분봉 데이터 (9시~3시)
+	historicalData, err := exch.GetMinuteData(stockCode, minutePoints)
 	if err != nil {
 		t.Fatalf("Failed to get minute data: %v", err)
 	}

@@ -1,6 +1,7 @@
 package backtesting
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 	"tradingbot/internal/models"
@@ -46,33 +47,25 @@ func (b *Backtester) Run() BacktestResult {
 	}
 	maxBalance := balance
 
-	for _, data := range b.Data { // Removed `i` since it's not used
+	for _, data := range b.Data {
 		signal := b.Strategy.Analyze(&data)
-		currentPrice := parsePrice(data.StckPrpr)
+		currentPrice, err := parsePrice(data.StckPrpr)
+		if err != nil {
+			// 에러 로그 처리 추가 필요
+			continue
+		}
 
 		switch signal.Type {
 		case strategy.BuySignal:
 			if position == 0 {
-				position = (balance * (1 - b.CommissionRate)) / currentPrice
+				position, balance = b.executeBuy(balance, currentPrice)
 				entryPrice = currentPrice
-				balance = 0
 				result.TotalTrades++
 			}
 		case strategy.SellSignal:
 			if position > 0 {
-				balance = position * currentPrice * (1 - b.CommissionRate)
-				profit := balance - b.InitialBalance
-				result.TotalTrades++
-				if profit > 0 {
-					result.WinningTrades++
-				} else {
-					result.LosingTrades++
-				}
-				result.TotalProfit += profit
-
-				profitPercentage := (currentPrice - entryPrice) / entryPrice * 100
-				result.AverageProfitPerTrade += profitPercentage
-
+				balance = b.executeSell(position, currentPrice)
+				balance = b.closePosition(currentPrice, entryPrice, &result)
 				position = 0
 				entryPrice = 0
 			}
@@ -93,19 +86,10 @@ func (b *Backtester) Run() BacktestResult {
 
 	// 마지막 포지션 청산
 	if position > 0 {
-		finalPrice := parsePrice(b.Data[len(b.Data)-1].StckPrpr)
-		balance = position * finalPrice * (1 - b.CommissionRate)
-		profit := balance - b.InitialBalance
-		result.TotalProfit += profit
-		result.TotalTrades++
-		if profit > 0 {
-			result.WinningTrades++
-		} else {
-			result.LosingTrades++
+		finalPrice, err := parsePrice(b.Data[len(b.Data)-1].StckPrpr)
+		if err == nil {
+			balance = b.closePosition(finalPrice, entryPrice, &result)
 		}
-
-		profitPercentage := (finalPrice - entryPrice) / entryPrice * 100
-		result.AverageProfitPerTrade += profitPercentage
 	}
 
 	if result.TotalTrades > 0 {
@@ -116,7 +100,33 @@ func (b *Backtester) Run() BacktestResult {
 	return result
 }
 
-func parsePrice(priceStr string) float64 {
-	price, _ := strconv.ParseFloat(priceStr, 64)
-	return price
+func parsePrice(priceStr string) (float64, error) {
+	price, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse price: %v", err)
+	}
+	return price, nil
+}
+
+func (b *Backtester) closePosition(finalPrice, entryPrice float64, result *BacktestResult) float64 {
+	balance := b.InitialBalance * finalPrice / entryPrice
+	profit := balance - b.InitialBalance
+	result.TotalProfit += profit
+	result.TotalTrades++
+	if profit > 0 {
+		result.WinningTrades++
+	} else {
+		result.LosingTrades++
+	}
+	result.AverageProfitPerTrade += (finalPrice - entryPrice) / entryPrice * 100
+	return balance
+}
+
+func (b *Backtester) executeBuy(balance, currentPrice float64) (float64, float64) {
+	position := (balance * (1 - b.CommissionRate)) / currentPrice
+	return position, 0 // 포지션을 열고, 잔고를 0으로 설정
+}
+
+func (b *Backtester) executeSell(position, currentPrice float64) float64 {
+	return position * currentPrice * (1 - b.CommissionRate) // 포지션을 닫고 잔고 갱신
 }

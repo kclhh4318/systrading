@@ -32,41 +32,24 @@ func main() {
 
 	log.Info("Starting trading bot...")
 
-	cfg, err := config.Load("config.yaml")
+	cfg, db, exch, strat, err := initialize("config.yaml")
 	if err != nil {
-		log.WithError(err).Fatal("Failed to load config")
-
+		log.WithError(err).Fatal("Initialization failed")
 	}
+	defer db.Close()
 
 	// Run backtesting
 	runBacktest(cfg)
 
-	db, err := database.NewConnection(cfg.DatabaseURL)
-	if err != nil {
-		log.WithError(err).Fatal("Failed to connect to database")
-	}
-	defer db.Close()
-
-	exch, err := exchange.New(cfg.Exchange)
-	if err != nil {
-		log.WithError(err).Fatal("Failed to initialize exchange")
-	}
-
-	strat := strategy.NewMovingAverage(cfg.Strategy)
-
 	// Initial market check
 	marketData, err := exch.GetSamsungPrice()
-	if err != nil {
-		log.WithError(err).Error("Failed to get Samsung price")
-	} else {
+	if !logAndCheckError(err, "Samsung Electronics Stock Price", logrus.Fields{"price": marketData.StckPrpr}) {
 		log.WithField("price", marketData.StckPrpr).Info("Samsung Electronics Stock Price")
 	}
 
 	// Initial balance check
 	balance, err := exch.GetBalance()
-	if err != nil {
-		log.WithError(err).Error("Failed to get account balance")
-	} else {
+	if !logAndCheckError(err, "Account Balance", logrus.Fields{"balance": balance}) {
 		log.WithField("balance", balance).Info("Account Balance")
 	}
 
@@ -145,4 +128,34 @@ func runBacktest(cfg *config.Config) {
 		"WinRate":           result.WinRate * 100,
 		"AvgProfitPerTrade": result.AverageProfitPerTrade,
 	}).Info("Backtesting results")
+}
+
+func initialize(cfgPath string) (*config.Config, *database.DB, *exchange.KISExchange, *strategy.MovingAverage, error) {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	db, err := database.NewConnection(cfg.DatabaseURL)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	exch, err := exchange.New(cfg.Exchange)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	strat := strategy.NewMovingAverage(cfg.Strategy)
+
+	return cfg, db, exch, strat, nil
+}
+
+func logAndCheckError(err error, message string, fields logrus.Fields) bool {
+	if err != nil {
+		log.WithError(err).Error(message)
+		return true
+	}
+	log.WithFields(fields).Info(message)
+	return false
 }
