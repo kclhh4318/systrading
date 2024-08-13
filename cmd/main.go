@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"time"
+	"tradingbot/internal/backtesting"
 	"tradingbot/internal/config"
 	"tradingbot/internal/database"
 	"tradingbot/internal/exchange"
@@ -34,7 +35,11 @@ func main() {
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		log.WithError(err).Fatal("Failed to load config")
+
 	}
+
+	// Run backtesting
+	runBacktest(cfg)
 
 	db, err := database.NewConnection(cfg.DatabaseURL)
 	if err != nil {
@@ -71,8 +76,8 @@ func main() {
 			log.WithError(err).Error("Error in trading cycle")
 		}
 
-		log.WithField("interval", cfg.PollingInterval).Info("Sleeping")
-		time.Sleep(cfg.PollingInterval)
+		log.WithField("interval", cfg.ParsedInterval).Info("Sleeping")
+		time.Sleep(cfg.ParsedInterval)
 	}
 }
 
@@ -106,4 +111,38 @@ func runTradingCycle(cfg *config.Config, exch *exchange.KISExchange, strat *stra
 	}
 
 	return nil
+}
+
+// main.go
+func runBacktest(cfg *config.Config) {
+	log.Info("Starting backtesting...")
+
+	exch, err := exchange.New(cfg.Exchange)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to initialize exchange")
+	}
+
+	stockCode := "041510"
+	days := 100 // 100일 데이터
+
+	historicalData, err := exch.GetHistoricalData(stockCode, days)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to get historical data")
+	}
+
+	strat := strategy.NewMovingAverage(cfg.Strategy)
+
+	backtester := backtesting.NewBacktester(strat, historicalData, 10000000, 0.0025)
+
+	result := backtester.Run()
+
+	log.WithFields(logrus.Fields{
+		"TotalTrades":       result.TotalTrades,
+		"WinningTrades":     result.WinningTrades,
+		"LosingTrades":      result.LosingTrades,
+		"TotalProfit":       result.TotalProfit,
+		"MaxDrawdown":       result.MaxDrawdown * 100,
+		"WinRate":           result.WinRate * 100,
+		"AvgProfitPerTrade": result.AverageProfitPerTrade,
+	}).Info("Backtesting results")
 }

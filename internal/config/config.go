@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -13,7 +15,8 @@ type Config struct {
 	Exchange        ExchangeConfig `yaml:"exchange"`
 	Strategy        StrategyConfig `yaml:"strategy"`
 	TradingPair     string         `yaml:"trading_pair"`
-	PollingInterval time.Duration  `yaml:"polling_interval"`
+	PollingInterval string         `yaml:"polling_interval"`
+	ParsedInterval  time.Duration  // 파싱된 duration을 저장할 새 필드
 }
 
 type ExchangeConfig struct {
@@ -31,15 +34,17 @@ type StrategyConfig struct {
 }
 
 func Load(filename string) (*Config, error) {
-	// .env 파일 로드
-	err := godotenv.Load()
+	// .env 파일 로드 시도 (config.yaml과 같은 디렉토리에서)
+	envPath := filepath.Join(filepath.Dir(filename), ".env")
+	err := godotenv.Load(envPath)
 	if err != nil {
-		return nil, err
+		fmt.Printf("Warning: Error loading .env file: %v\n", err)
 	}
 
+	// config.yaml 파일 열기
 	file, err := os.Open(filename)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open config file: %v", err)
 	}
 	defer file.Close()
 
@@ -47,14 +52,24 @@ func Load(filename string) (*Config, error) {
 	decoder := yaml.NewDecoder(file)
 	err = decoder.Decode(&config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode config file: %v", err)
 	}
 
-	// .env 파일에서 로드된 환경 변수에서 API 키와 비밀키 읽기
+	// 환경 변수에서 API 키와 비밀키 읽기
 	config.Exchange.APIKey = os.Getenv("EXCHANGE_API_KEY")
 	config.Exchange.APISecret = os.Getenv("EXCHANGE_API_SECRET")
 
-	config.PollingInterval *= time.Minute
+	// API 키와 비밀키가 비어있는지 확인
+	if config.Exchange.APIKey == "" || config.Exchange.APISecret == "" {
+		fmt.Println("Warning: API key or secret is empty")
+	}
+
+	// PollingInterval 파싱
+	duration, err := time.ParseDuration(config.PollingInterval)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse polling interval: %v", err)
+	}
+	config.ParsedInterval = duration
 
 	return &config, nil
 }
