@@ -3,8 +3,6 @@ package strategy
 import (
 	"log"
 	"strconv"
-	"testing"
-	"tradingbot/internal/config"
 	"tradingbot/internal/models"
 )
 
@@ -22,15 +20,15 @@ type MovingAverage struct {
 	ShortPeriod  int
 	LongPeriod   int
 	Threshold    float64
-	ShortSMA     float64 // 추가된 필드
-	LongSMA      float64 // 추가된 필드
+	ShortSMA     float64
+	LongSMA      float64
 	PriceHistory []float64
 }
 
-func NewMovingAverage(config config.StrategyConfig) *MovingAverage {
+func NewMovingAverage(config models.StrategyConfig) *MovingAverage {
 	return &MovingAverage{
-		ShortPeriod:  5,
-		LongPeriod:   10,
+		ShortPeriod:  config.ShortPeriod,
+		LongPeriod:   config.LongPeriod,
 		Threshold:    config.Threshold,
 		PriceHistory: []float64{},
 	}
@@ -89,59 +87,4 @@ func (ma *MovingAverage) calculateSMA(period int) float64 {
 	}
 
 	return sum / float64(period)
-}
-
-func (ma *MovingAverage) calculateMA(period int) float64 {
-	if len(ma.PriceHistory) < period {
-		return 0
-	}
-
-	sum := 0.0
-	for i := len(ma.PriceHistory) - period; i < len(ma.PriceHistory); i++ {
-		sum += ma.PriceHistory[i]
-	}
-
-	return sum / float64(period)
-}
-
-func TestMovingAverageAnalyze(t *testing.T) {
-	ma := NewMovingAverage(config.StrategyConfig{
-		ShortPeriod: 5,
-		LongPeriod:  10,
-		Threshold:   0.01,
-	})
-
-	testCases := []struct {
-		name     string
-		prices   []string
-		expected string
-	}{
-		{
-			name:     "Uptrend",
-			prices:   []string{"100", "101", "102", "103", "104", "105", "106", "107", "108", "109", "110"},
-			expected: BuySignal,
-		},
-		{
-			name:     "Downtrend",
-			prices:   []string{"110", "109", "108", "107", "106", "105", "104", "103", "102", "101", "100"},
-			expected: SellSignal,
-		},
-		{
-			name:     "Sideways",
-			prices:   []string{"100", "101", "100", "101", "100", "101", "100", "101", "100", "101", "100"},
-			expected: HoldSignal,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			for _, price := range tc.prices {
-				ma.Analyze(&models.MarketData{StckPrpr: price})
-			}
-			result := ma.Analyze(&models.MarketData{StckPrpr: tc.prices[len(tc.prices)-1]})
-			if result.Type != tc.expected {
-				t.Errorf("Expected %s, but got %s", tc.expected, result.Type)
-			}
-		})
-	}
 }

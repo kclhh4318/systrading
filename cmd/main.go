@@ -7,6 +7,7 @@ import (
 	"tradingbot/internal/config"
 	"tradingbot/internal/database"
 	"tradingbot/internal/exchange"
+	"tradingbot/internal/models"
 	"tradingbot/internal/strategy"
 
 	"github.com/pkg/errors"
@@ -73,7 +74,7 @@ func runTradingCycle(cfg *config.Config, exch *exchange.KISExchange, strat *stra
 	signal := strat.Analyze(marketData)
 	log.WithField("signal", signal.Type).Info("Strategy analysis result")
 
-	if signal.Type != strategy.HoldSignal {
+	if signal.Type != models.HoldSignal {
 		log.WithFields(logrus.Fields{
 			"type":   signal.Type,
 			"amount": signal.Amount,
@@ -96,7 +97,6 @@ func runTradingCycle(cfg *config.Config, exch *exchange.KISExchange, strat *stra
 	return nil
 }
 
-// main.go
 func runBacktest(cfg *config.Config) {
 	log.Info("Starting backtesting...")
 
@@ -113,7 +113,12 @@ func runBacktest(cfg *config.Config) {
 		log.WithError(err).Fatal("Failed to get historical data")
 	}
 
-	strat := strategy.NewMovingAverage(cfg.Strategy)
+	strategyConfig := models.StrategyConfig{
+		ShortPeriod: cfg.Strategy.ShortPeriod,
+		LongPeriod:  cfg.Strategy.LongPeriod,
+		Threshold:   cfg.Strategy.Threshold,
+	}
+	strat := strategy.NewMovingAverage(strategyConfig)
 
 	backtester := backtesting.NewBacktester(strat, historicalData, 10000000, 0.0025)
 
@@ -141,12 +146,24 @@ func initialize(cfgPath string) (*config.Config, *database.DB, *exchange.KISExch
 		return nil, nil, nil, nil, err
 	}
 
+	// Get access token dynamically
+	accessToken, err := exchange.GetAccessToken(cfg.Exchange.AppKey, cfg.Exchange.AppSecret)
+	if err != nil {
+		return nil, nil, nil, nil, errors.Wrap(err, "failed to get access token")
+	}
+	cfg.Exchange.AccessToken = accessToken
+
 	exch, err := exchange.New(cfg.Exchange)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 
-	strat := strategy.NewMovingAverage(cfg.Strategy)
+	strategyConfig := models.StrategyConfig{
+		ShortPeriod: cfg.Strategy.ShortPeriod,
+		LongPeriod:  cfg.Strategy.LongPeriod,
+		Threshold:   cfg.Strategy.Threshold,
+	}
+	strat := strategy.NewMovingAverage(strategyConfig)
 
 	return cfg, db, exch, strat, nil
 }

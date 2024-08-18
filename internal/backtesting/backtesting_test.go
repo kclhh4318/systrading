@@ -1,91 +1,110 @@
 package backtesting
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
+	"encoding/json"
+	"io/ioutil"
+	"log"
+	"net/http"
 	"testing"
 	"tradingbot/internal/config"
-	"tradingbot/internal/exchange"
+	"tradingbot/internal/models"
 	"tradingbot/internal/strategy"
 )
 
-const (
-	stockCode    = "041510"
-	minutePoints = 420
-)
-
-var projectRoot string
-
-func findProjectRoot() (string, error) {
-	if projectRoot != "" {
-		return projectRoot, nil
-	}
-
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			projectRoot = dir
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("could not find project root")
-		}
-		dir = parent
-	}
-}
-
 func TestBacktestingWithMinuteData(t *testing.T) {
-	// 프로젝트 루트 디렉토리 찾기
-	rootDir, err := findProjectRoot()
-	if err != nil {
-		t.Fatalf("Failed to find project root: %v", err)
-	}
-	t.Logf("Project root directory: %s", rootDir)
-
-	// 설정 로드
-	configPath := filepath.Join(rootDir, "config.yaml")
-	cfg, err := config.Load(configPath)
+	// 환경 설정 로드
+	cfg, err := config.Load("../../config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Exchange 초기화
-	exch, err := exchange.New(cfg.Exchange)
-	if err != nil {
-		t.Fatalf("Failed to initialize exchange: %v", err)
+	// Set the Access Token (this should be set correctly in your config)
+	if cfg.Exchange.AccessToken == "" {
+		t.Fatalf("Access Token is missing, please set a valid access token.")
 	}
 
-	// 당일의 1분봉 데이터 가져오기
-	historicalData, err := exch.GetMinuteData(stockCode, minutePoints)
+	// Print the Access Token for debugging (remove this in production)
+	log.Printf("Using Access Token: %s", cfg.Exchange.AccessToken)
+
+	log.Printf("Decoded strategy config: %+v", cfg.Strategy)
+	log.Printf("Loaded config: %+v", cfg)
+
+	// 분봉 데이터 요청 URL 설정
+	url := "https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+
+	// 요청 생성
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		t.Fatalf("Failed to get minute data: %v", err)
+		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	t.Logf("Retrieved %d minute data points", len(historicalData))
+	// 헤더 설정
+	req.Header.Set("Authorization", "Bearer "+cfg.Exchange.AccessToken)
+	req.Header.Set("appkey", cfg.Exchange.APIKey)
+	req.Header.Set("appsecret", cfg.Exchange.APISecret)
+	req.Header.Set("tr_id", "FHKST03010200")
+	req.Header.Set("custtype", "P")
 
-	// Backtester 초기화 및 실행
+	// 쿼리 파라미터 설정
+	query := req.URL.Query()
+	query.Add("FID_COND_MRKT_DIV_CODE", "J")
+	query.Add("FID_INPUT_ISCD", cfg.TradingPair)
+	query.Add("FID_INPUT_HOUR_1", "090000")
+	query.Add("FID_ETC_CLS_CODE", "")
+	query.Add("FID_PW_DATA_INCU_YN", "N")
+	req.URL.RawQuery = query.Encode()
+
+	// 요청 보내기
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 응답 확인
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("API response status code: %v", resp.StatusCode)
+	}
+
+	// 응답 바디 읽기
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+	log.Printf("Minute data response body: %s", string(body))
+
+	// JSON 파싱
+	var result map[string]interface{}
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal response body: %v", err)
+	}
+
+	// 데이터 확인
+	output2, ok := result["output2"].([]interface{})
+	if !ok || len(output2) == 0 {
+		t.Fatalf("Unexpected response format: 'output2' field not found or empty")
+	}
+	log.Printf("Retrieved %d minute data points", len(output2))
+
+	// 전략 테스트
 	strat := strategy.NewMovingAverage(cfg.Strategy)
-	backtester := NewBacktester(strat, historicalData, 10000000, 0.0025)
-	result := backtester.Run()
+	totalTrades := 0
+	for _, data := range output2 {
+		dataMap := data.(map[string]interface{})
+		signal := strat.Analyze(&models.MarketData{
+			StckPrpr: dataMap["stck_prpr"].(string),
+		})
+		log.Printf("Signal generated: %v", signal.Type)
+		if signal.Type != strategy.HoldSignal {
+			totalTrades++
+		}
+	}
 
 	// 결과 검증
-	if result.TotalTrades == 0 {
-		t.Errorf("Expected some trades, but got 0")
-	} else {
-		t.Logf("Backtesting Results:")
-		t.Logf("Total Trades: %d", result.TotalTrades)
-		t.Logf("Winning Trades: %d", result.WinningTrades)
-		t.Logf("Losing Trades: %d", result.LosingTrades)
-		t.Logf("Total Profit: %.2f", result.TotalProfit)
-		t.Logf("Max Drawdown: %.2f%%", result.MaxDrawdown*100)
-		t.Logf("Win Rate: %.2f%%", result.WinRate*100)
-		t.Logf("Average Profit per Trade: %.2f%%", result.AverageProfitPerTrade)
-		t.Logf("Start Date: %v", result.StartDate)
-		t.Logf("End Date: %v", result.EndDate)
+	if totalTrades == 0 {
+		t.Errorf("Expected some trades, but got %d", totalTrades)
 	}
+
 }

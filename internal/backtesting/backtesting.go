@@ -51,18 +51,18 @@ func (b *Backtester) Run() BacktestResult {
 		signal := b.Strategy.Analyze(&data)
 		currentPrice, err := parsePrice(data.StckPrpr)
 		if err != nil {
-			// 에러 로그 처리 추가 필요
+			fmt.Printf("Warning: %v\n", err)
 			continue
 		}
 
 		switch signal.Type {
-		case strategy.BuySignal:
+		case models.BuySignal:
 			if position == 0 {
 				position, balance = b.executeBuy(balance, currentPrice)
 				entryPrice = currentPrice
 				result.TotalTrades++
 			}
-		case strategy.SellSignal:
+		case models.SellSignal:
 			if position > 0 {
 				balance = b.executeSell(position, currentPrice)
 				balance = b.closePosition(currentPrice, entryPrice, &result)
@@ -89,6 +89,8 @@ func (b *Backtester) Run() BacktestResult {
 		finalPrice, err := parsePrice(b.Data[len(b.Data)-1].StckPrpr)
 		if err == nil {
 			balance = b.closePosition(finalPrice, entryPrice, &result)
+		} else {
+			fmt.Printf("Warning: %v\n", err)
 		}
 	}
 

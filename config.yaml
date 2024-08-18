@@ -5,8 +5,8 @@ exchange:
 
 strategy:
   name: "moving_average"
-  short_period: 10
-  long_period: 30
+  short_period: 5
+  long_period: 10
   threshold: 0.01
 trading_pair: "005930"  # 삼성전자 종목 코드
 polling_interval: "1m"
